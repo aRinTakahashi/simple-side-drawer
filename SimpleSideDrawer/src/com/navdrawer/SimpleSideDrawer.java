@@ -18,20 +18,13 @@ package com.navdrawer;
 
 import android.app.Activity;
 import android.content.Context;
-import android.content.res.XmlResourceParser;
 import android.graphics.Rect;
-import android.graphics.drawable.GradientDrawable.Orientation;
-import android.util.AttributeSet;
-import android.util.DisplayMetrics;
-import android.util.Xml;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.ViewGroup.LayoutParams;
 import android.view.Window;
-import android.view.animation.AccelerateDecelerateInterpolator;
 import android.view.animation.DecelerateInterpolator;
 import android.view.animation.Interpolator;
 import android.widget.FrameLayout;
@@ -50,8 +43,16 @@ import android.widget.Scroller;
  * public void onCreate(Bundle data) {
  *     super.onCreate(data);
  *     setContentView(R.layout.main);
- *     SimpleNavDrawer nav = new SimpleNavDrawer(this);
- *     nav.setLeftBehindContentView(R.layout.manu);
+ *     mNav = new SimpleNavDrawer(this);
+ *     mNav.setLeftBehindContentView(R.layout.manu);
+ * }
+ * 
+ * public boolean dispatchTouchEvent(MotionEvent ev) {
+ *     if (mNav.dispatchActivityTouchEvent(ev)) {
+ *         return true;
+ *     } else {
+ *         return super.dispatchTouchEvent(ev);
+ *     }
  * }
  * </pre>
  * @author Masahiko Adachi
@@ -73,116 +74,92 @@ public class SimpleSideDrawer extends FrameLayout {
     private int mDurationRight;
     private int mLeftBehindViewWidth;
     private int mRightBehindViewWidth;
-    
-    private abstract class DragAction {
-        private float mLastMotionX = 0f;
-        private boolean mOpening = false;
-        private boolean mDraggable = false;
-        abstract public boolean onTouchEvent(MotionEvent event); 
-    }
+    private boolean mDragOpenEnabled = true;
 
-    private DragAction mLeftDragAction = new DragAction() {
-        @Override
-        public boolean onTouchEvent(MotionEvent ev) {
-            int action = ev.getAction() & MotionEvent.ACTION_MASK;
-            switch (action) {
-            case MotionEvent.ACTION_DOWN:
-            {
-                float x = ev.getX();
-                mLeftDragAction.mLastMotionX = x;
-                mLeftDragAction.mDraggable = mAboveView.getScrollX() != 0;
-                break;
-            }
-            case MotionEvent.ACTION_UP:
-            {
-                if (mLeftDragAction.mDraggable) {
+    private DragAction mDragAction = new DragAction();
+
+    private enum DragState { INITIAL, SCROLLING, NOT_SCROLLING }; 
+    
+    private class DragAction {
+        private float mLastMotionX = 0f;
+        private float mLastMotionY = 0f;
+        private float mLastMoveDistanceX = 0f;
+        private DragState mState = DragState.INITIAL;
+
+        public boolean dispatchTouchEvent(MotionEvent event) {
+            int actionMasked = event.getAction() & MotionEvent.ACTION_MASK;
+            if (actionMasked == MotionEvent.ACTION_DOWN) {
+                mLastMotionX = event.getX();
+                mLastMotionY = event.getY();
+                mState = DragState.INITIAL;
+            } else if (actionMasked == MotionEvent.ACTION_UP) {
+                if (mState == DragState.SCROLLING && mAboveView.getScrollX() != 0) {
                     int currentX = mAboveView.getScrollX();
                     int diffX = 0;
-                    if (mLeftDragAction.mOpening) {
-                        diffX = -(mLeftBehindViewWidth + currentX);
-                    } else {
-                        diffX = -currentX;
+                    if (mLastMoveDistanceX < 0) {
+                        if (isLeftSideOpened()) {
+                            diffX = -(mLeftBehindViewWidth + currentX);
+                        } else if (isRightSideOpened()) {
+                            diffX = -currentX;
+                        }
+                    } else if (mLastMoveDistanceX > 0) {
+                        if (isLeftSideOpened()) {
+                            diffX = -currentX;
+                        } else if (isRightSideOpened()) {
+                            diffX = mRightBehindViewWidth - currentX;
+                        }
                     }
-                    mScroller.startScroll(currentX, 0, diffX, 0, mDurationLeft);
-                    invalidate();
+                    if (diffX != 0) {
+                        mScroller.startScroll(currentX, 0, diffX, 0, mDurationLeft);
+                        invalidate();
+                        event.setAction(MotionEvent.ACTION_CANCEL);
+                    }
                 }
-                break;
-            }
-            case MotionEvent.ACTION_MOVE:
-                if (!mLeftDragAction.mDraggable) return false;
-            
-                float newX = ev.getX();
-                float diffX = -(newX - mLeftDragAction.mLastMotionX);
-                int x = mAboveView.getScrollX();
-                mLeftDragAction.mOpening = mLeftDragAction.mLastMotionX < newX;
-                mLeftDragAction.mLastMotionX = newX;
-                float nextX = x + diffX;
-                if (0 < nextX) {
-                    mAboveView.scrollTo(0, 0);
+            } else if (actionMasked == MotionEvent.ACTION_MOVE) {
+                float distanceX = mLastMotionX - event.getX();
+                float distanceY = mLastMotionY - event.getY();
+                mLastMotionX = event.getX();
+                mLastMotionY = event.getY();
+                mLastMoveDistanceX = distanceX;
+
+                float nextX = mAboveView.getScrollX() + distanceX;
+                if (mLeftBehindView == null && nextX < 0) {
+                    nextX = 0;
+                } else if (mRightBehindView == null && nextX > 0) {
+                    nextX = 0;
+                } else if (nextX < -mLeftBehindViewWidth) {
+                    nextX = -mLeftBehindViewWidth;
+                } else if (nextX > mRightBehindViewWidth) {
+                    nextX = mRightBehindViewWidth;
+                }
+                
+                if ((mState == DragState.INITIAL && Math.abs(distanceX) > Math.abs(distanceY))
+                        || mState == DragState.SCROLLING) {
+                    if (mAboveView.getScrollX() >= 0 && nextX < 0) {
+                        if (!mDragOpenEnabled) {
+                            return false;
+                        }
+                        mLeftBehindBase.setVisibility(View.VISIBLE);
+                        mRightBehindBase.setVisibility(View.GONE);
+                    } else if (mAboveView.getScrollX() <= 0 && nextX > 0) {
+                        if (!mDragOpenEnabled) {
+                            return false;
+                        }
+                        mLeftBehindBase.setVisibility(View.GONE);
+                        mRightBehindBase.setVisibility(View.VISIBLE);
+                    }
+                    mAboveView.scrollTo((int) nextX, 0);
+                    mState = DragState.SCROLLING;
+                    return true;
                 } else {
-                    if (nextX < -mLeftBehindViewWidth) {
-                        mAboveView.scrollTo(-mLeftBehindViewWidth, 0);
-                    } else {
-                        mAboveView.scrollBy((int) diffX, 0);
-                    }
+                    mState = DragState.NOT_SCROLLING;
+                    return false;
                 }
-                break;
             }
             return false;
         }
-    };
-    
-    private DragAction mRightDragAction = new DragAction() {
-        @Override
-        public boolean onTouchEvent(MotionEvent ev) {
-            int action = ev.getAction() & MotionEvent.ACTION_MASK;
-            switch (action) {
-            case MotionEvent.ACTION_DOWN:
-            {
-                float x = ev.getX();
-                mRightDragAction.mLastMotionX = x;
-                mRightDragAction.mDraggable = mAboveView.getScrollX() != 0;
-                break;
-            }
-            case MotionEvent.ACTION_UP:
-            {
-                if (mRightDragAction.mDraggable) {
-                    int currentX = mAboveView.getScrollX();
-                    int diffX = 0;
-                    if (mRightDragAction.mOpening) {
-                        diffX = mRightBehindViewWidth - currentX;
-                    } else {
-                        diffX = -currentX;
-                    }
-                    mScroller.startScroll(currentX, 0, diffX, 0, mDurationRight);
-                    invalidate();
-                }
-                break;
-            }
-            case MotionEvent.ACTION_MOVE:
-                if (!mRightDragAction.mDraggable) return false;
-            
-                float newX = ev.getX();
-                float diffX = -(newX - mRightDragAction.mLastMotionX);
-                int x = mAboveView.getScrollX();
-                mRightDragAction.mOpening = newX < mRightDragAction.mLastMotionX;
-                mRightDragAction.mLastMotionX = newX;
-                float nextX = x + diffX;
-                if (nextX < 0) {
-                    mAboveView.scrollTo(0, 0);
-                } else {
-                    if (nextX < mRightBehindViewWidth) {
-                        mAboveView.scrollBy((int) diffX, 0);
-                    } else {
-                        mAboveView.scrollTo(mRightBehindViewWidth, 0);
-                    }
-                }
-                break;
-            }
-            return false;
-        }
-    };
-    
+	}
+
     /**
      * <p>The default Interpolator of drawer animation is DecelerateInterpolator(9.9).</p>
      * <p>The default animation duration is 230msec.</p>
@@ -222,7 +199,7 @@ public class SimpleSideDrawer extends FrameLayout {
         mAboveView = new FrameLayout(context);
         mAboveView.setLayoutParams(new FrameLayout.LayoutParams(fp, fp));
         //overlay is used for controlling drag action, slid to close/open.
-        mOverlay = new OverlayView(getContext());
+        mOverlay = new View(getContext());
         mOverlay.setLayoutParams(new FrameLayout.LayoutParams(fp, fp, Gravity.BOTTOM));
         mOverlay.setEnabled(true);
         mOverlay.setVisibility(View.GONE);
@@ -345,7 +322,7 @@ public class SimpleSideDrawer extends FrameLayout {
      * Close the left-side behind view
      */
     public void closeLeftSide() {
-        int curX = -mLeftBehindViewWidth;//mAboveView.getScrollX();
+        int curX = mAboveView.getScrollX();
         mScroller.startScroll(curX, 0, -curX, 0, mDurationLeft);
         invalidate();
     }
@@ -354,7 +331,7 @@ public class SimpleSideDrawer extends FrameLayout {
      * Close the right-side behide view 
      */
     public void closeRightSide() {
-        int curX = mRightBehindViewWidth;//mAboveView.getScrollX();
+        int curX = mAboveView.getScrollX();
         mScroller.startScroll(curX, 0, -curX, 0, mDurationRight);
         invalidate();
     }
@@ -426,6 +403,27 @@ public class SimpleSideDrawer extends FrameLayout {
         return mAboveView != null && mAboveView.getScrollX() == 0;
     }
     
+    /**
+     * Set the enabled state of opening side drawer by dragging
+     * @param enabled
+     */
+    public void setDragOpenEnabled(boolean enabled) {
+        mDragOpenEnabled = enabled;
+    }
+    
+    /**
+     * call this method from Activity.dispatchTouchEvent
+     * @param ev
+     * @return
+     */
+    public boolean dispatchActivityTouchEvent(MotionEvent ev) {
+        if (mDragAction.dispatchTouchEvent(ev)) {
+            return true;
+        } else {
+            return super.dispatchTouchEvent(ev);
+        }
+    }
+    
     private boolean isLeftSideOpened() {
         return mLeftBehindBase.getVisibility() == View.VISIBLE && mRightBehindBase.getVisibility() == View.GONE;
     }
@@ -470,22 +468,8 @@ public class SimpleSideDrawer extends FrameLayout {
             }
         }
     }
-    
-    /**
-     * {@hide}
-     */
-    @Override
-    public boolean onTouchEvent(MotionEvent ev) {
-        if (isLeftSideOpened()) {
-            return mLeftDragAction.onTouchEvent(ev);
-        } else if (isRightSideOpened()) {
-            return mRightDragAction.onTouchEvent(ev);
-        } else {
-            return true;
-        }
-    }
 
-    private class BehindLinearLayout extends LinearLayout {
+	private class BehindLinearLayout extends LinearLayout {
 
         public BehindLinearLayout(Context context) {
             super(context);
@@ -498,45 +482,6 @@ public class SimpleSideDrawer extends FrameLayout {
         public void fitDisplay(Rect rect) {
             mBehindView.setPadding(rect.left, rect.top, 0, 0);
             requestLayout();
-        }
-    }
-    
-    /**
-     * Overlay view only when the behind menu is appeared.
-     * This view control scrolling the above view  
-     * @author Masahiko Adachi
-     */
-    private class OverlayView extends View {
-        private static final float CLICK_RANGE = 3;
-        private float mDownX;
-        private float mDownY;
-        private OnClickListener mClickListener;
-        public OverlayView(Context context) {
-            super(context);
-        }
-        
-        public void setOnClickListener(OnClickListener listener) {
-            mClickListener = listener;
-            super.setOnClickListener(listener);
-        }
-        
-        public boolean onTouchEvent(MotionEvent ev) {
-            ev.setLocation(ev.getX() - mAboveView.getScrollX(), 0);
-            SimpleSideDrawer.this.onTouchEvent(ev);
-            int action = ev.getAction() & MotionEvent.ACTION_MASK;
-                float x = ev.getX();
-                float y = ev.getY();
-            if (action == MotionEvent.ACTION_DOWN) {
-                mDownX = x;
-                mDownY = y;
-            } else if (action == MotionEvent.ACTION_UP) {
-                if (mClickListener != null) {
-                    if (Math.abs(mDownX - x) < CLICK_RANGE && Math.abs(mDownY - y) < CLICK_RANGE) {
-                        mClickListener.onClick(this);
-                    }
-                }
-            }
-            return true;
         }
     }
 }
