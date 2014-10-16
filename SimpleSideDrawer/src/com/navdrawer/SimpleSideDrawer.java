@@ -360,6 +360,16 @@ public class SimpleSideDrawer extends FrameLayout {
     }
     
     /**
+     * Close the right-side or left-side behind view with no sliding animation
+     */
+    public void closeWithNoAnim() {
+        mAboveView.scrollTo(0, 0);
+        mOverlay.setVisibility(View.GONE);
+        mLeftBehindBase.setVisibility(View.GONE);
+        mRightBehindBase.setVisibility(View.GONE);
+    }
+    
+    /**
      * Open the behind view by swiping the front view right
      * @deprecated You should use openLeftSide()
      */
