@@ -514,7 +514,8 @@ public class SimpleSideDrawer extends FrameLayout {
                 if (bottomPadding < 0) {
                     bottomPadding = 0;
                 }
-                if (bottomPadding >= PADDING_CEILING_ON_ANDROID_Q) {
+                if (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q
+                	&& bottomPadding >= PADDING_CEILING_ON_ANDROID_Q) {
                     /*
                      * CAUTION:
                      * Android Q(10) requests shrink display
