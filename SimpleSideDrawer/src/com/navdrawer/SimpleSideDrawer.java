@@ -68,6 +68,8 @@ public class SimpleSideDrawer extends FrameLayout {
     private int mLeftBehindViewWidth;
     private int mRightBehindViewWidth;
 
+    private static int PADDING_CEILING_ON_ANDROID_Q = 300;
+
     private abstract class DragAction {
         private float mLastMotionX = 0f;
         private boolean mOpening = false;
@@ -511,6 +513,15 @@ public class SimpleSideDrawer extends FrameLayout {
                 bottomPadding = height - rect.height() - rect.top;
                 if (bottomPadding < 0) {
                     bottomPadding = 0;
+                }
+                if (bottomPadding >= PADDING_CEILING_ON_ANDROID_Q) {
+                    /*
+                     * CAUTION:
+                     * Android Q(10) requests shrink display
+                     * when the user open input panel.
+                     * We can know it only by padding is too high.
+                     */
+                    return;
                 }
             }
             mBehindView.setPadding(rect.left, rect.top, 0, bottomPadding);
